@@ -15,8 +15,10 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
 using namespace std;
 using json = nlohmann::json;
+json send_json, receive_json;
 int get_key() {
     int ch;
     struct termios old;
@@ -30,26 +32,11 @@ int get_key() {
     tcsetattr(0, TCSANOW, &old);
     return ch;
 }
-bool send(json send_json, int sock){
-    const char *c = send_json.dump().c_str();
-    send(sock, c, strlen(c), 0);
+bool send(json &send_json, int sock) {
+    string str = send_json.dump();
+    str += "\n";
+    send(sock, str.c_str(), str.length(), 0);
     return true;
-}
-bool is_shift_key(){
-    int key;
-    key = KEY_LEFTSHIFT;
-    FILE *kbd = fopen("/dev/input/by-path/platform-i8042-serio-0-event-kbd", "r");
-    if(kbd == NULL){
-        perror("접근불가");
-        exit(EXIT_FAILURE);
-    }
-    char key_map[KEY_MAX / 8 + 1];
-    memset(key_map, 0, sizeof(key_map));
-    ioctl(fileno(kbd), EVIOCGKEY(sizeof(key_map)), key_map);
-    int keyb = key_map[key / 8];
-    int mask = 1 << (key % 8);
-    fclose(kbd);
-    return keyb & mask;
 }
 int input_port() {
     int port;
@@ -97,17 +84,33 @@ string input_package_name() {
     getline(cin, package_name);
     return package_name == "" ? "com.xfl.msgbot" : package_name;
 }
+void receive_msg(int sock) {
+    char c;
+    while (1) {
+        if (read(sock, &c, 1) != -1) {
+            string str;
+            json recvmsg;
+            str.push_back(c);
+            while (read(sock, &c, 1) != -1 && c != '\n')
+                str.push_back(c);
+            recvmsg = json::parse(str);
+            if (recvmsg["data"]["isBot"].get<bool>()) {
+                printf("\r%s: %s\n", recvmsg["data"]["botName"].get<string>().c_str(), recvmsg["data"]["message"].get<string>().c_str());
+                printf("%s: ", send_json["data"]["authorName"].get<string>().c_str());
+                fflush(stdout);
+            }
+        }
+    }
+}
 int main() {
-    is_shift_key();
     int port = input_port();
-    json send_json, receive_json;
     send_json["name"] = "debugRoom";
     send_json["data"]["botName"] = input_bot_name();
     send_json["data"]["authorName"] = input_sender_name();
     send_json["data"]["roomName"] = input_room_name();
     send_json["data"]["isGroupChat"] = input_is_group_chat();
     send_json["data"]["packageName"] = input_package_name();
-    printf("디버그룸을 시작합니다.\n·Ctrl+C키를 눌러 나갈 수 있습니다.\n·Shift+Enter키를 눌러 여러줄을 입력 할수 있습니다.\n");
+    printf("디버그룸을 시작합니다.\n·Ctrl+C키를 눌러 나갈 수 있습니다.\n·줄 끝에 \\을 추가해 여러줄을 입력 할수 있습니다.\n");
     string msg;
     printf("%s: ", send_json["data"]["authorName"].get<string>().c_str());
     int sock = 0, valread;
@@ -126,16 +129,21 @@ int main() {
         printf("Connection Failed");
         return -1;
     }
+    thread t(receive_msg, sock);
     while (true) {
         string gl;
         getline(cin, gl);
-        if(msg == "") msg = gl;
-        else msg += "\n" + gl;
-        if(!is_shift_key()){
+        if (msg == "")
+            msg = gl;
+        else
+            msg += "\n" + gl;
+        if (gl[gl.length() - 1] != '\\') {
             send_json["data"]["message"] = msg;
             send(send_json, sock);
             msg = "";
             printf("%s: ", send_json["data"]["authorName"].get<string>().c_str());
+        } else {
+            msg.pop_back();
         }
     }
     return EXIT_SUCCESS;

@@ -10,6 +10,7 @@
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}",
                 "-I${workspaceFolder}/include",
+                "-lpthread",
                 "-std=c++2a"
             ],
             "options": {
